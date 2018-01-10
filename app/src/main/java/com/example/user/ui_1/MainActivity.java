@@ -9,6 +9,7 @@ import android.support.v4.view.ViewPager;
 import android.support.v7.app.ActionBar;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
+import android.support.v7.widget.RecyclerView;
 import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -16,45 +17,102 @@ import android.view.ViewTreeObserver;
 import android.view.WindowManager;
 import android.widget.ImageView;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import com.github.ksoichiro.android.observablescrollview.ObservableListView;
 import com.github.ksoichiro.android.observablescrollview.ObservableScrollViewCallbacks;
 import com.github.ksoichiro.android.observablescrollview.ScrollState;
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
 
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
+import java.net.InetAddress;
+import java.net.Socket;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.TreeMap;
 import java.util.concurrent.ExecutionException;
 
 public class MainActivity extends AppCompatActivity implements ObservableScrollViewCallbacks {
-    final static public String address = "10.23.44.167";
-    final static public int port = 6666;
+
+    final static public String address = "10.23.44.218";
     public int last = 0;
     public MyPage curPage;
     public final int add = 5;
     public int downloading = 0;
     public int ggbet = 1;
-    private void reDownload(){
-        downloading += add;
+    private void showProblems(){
+        Toast toast = Toast.makeText(getApplicationContext(),
+                "Проблемы с соединением к серверу. Проверьте настройки Интернета", Toast.LENGTH_SHORT);
+        toast.show();
+    }
+
+    public class RetriveTask extends AsyncTask<String, Integer, TreeMap<String, ArrayList<String> > >{
+        private Exception e = null;
+        private int port = 6666;
+        protected TreeMap<String, ArrayList<String> > doInBackground(String... urls){
+            TreeMap<String, ArrayList<String>>responce = new TreeMap<>();
+            try {
+                InetAddress ipAddress = InetAddress.getByName(urls[0]);
+                Socket socket = new Socket(ipAddress, port);
+                DataInputStream in = new DataInputStream(socket.getInputStream());
+                DataOutputStream out = new DataOutputStream(socket.getOutputStream());
+                TreeMap<String, String> req = new TreeMap<>();
+                req.put("type", "get_list");
+                req.put("count", "5");
+                req.put("last",urls[1]);
+                Gson gson = new GsonBuilder().setPrettyPrinting().create();
+                out.writeUTF(gson.toJson(req));
+                out.flush();
+                String res = in.readUTF();
+                responce = (TreeMap<String, ArrayList<String> >) new Gson().fromJson(res, responce.getClass());
+                req.clear();
+                req.put("type", "close");
+                out.writeUTF(gson.toJson(req));
+                out.flush();
+                socket.close();
+                return responce;
+            } catch (Exception e) {
+                this.e = e;
+                Log.e("Errr", e.toString());
+            }
+            return responce;
+        }
+        protected void onPostExecute(TreeMap<String,ArrayList<String>> result){
+            if (e != null){
+                showProblems();
+            }
+        }
+    }
+
+    public void reDownload(){
+
         RetriveTask retriveTask = new RetriveTask();
         retriveTask.execute(address, String.valueOf(last));
         TreeMap<String, ArrayList<String>> res = new TreeMap<>();
         ArrayList<String>links = new ArrayList<>();
         try {
             res = retriveTask.get();
-            links = res.get("links");
+            if (res != null)
+                links = res.get("links");
+            else
+                links = null;
         } catch (InterruptedException e) {
-            e.printStackTrace();
+            showProblems();
         } catch (ExecutionException e) {
-            e.printStackTrace();
+            showProblems();
         }
-        for (int i = 0; i < links.size(); i++){
-            DownloadTask task = new DownloadTask();
-            task.execute(links.get(i), Integer.toString(i + last));
+        if (links != null) {
+            for (int i = 0; i < links.size(); i++) {
+                downloading++;
+                DownloadTask task = new DownloadTask();
+                task.execute(links.get(i), Integer.toString(i + last));
+            }
+            last += add;
         }
-        last+=add;
     }
     @Override
     public void onScrollChanged(int scrollY, boolean firstScroll, boolean dragging) {
@@ -92,8 +150,7 @@ public class MainActivity extends AppCompatActivity implements ObservableScrollV
             super.onPostExecute(result);
             ImageView temp = new ImageView(curPage.getContext());
             temp.setImageBitmap(result);
-            curPage.adapter.add(new myMem("Meme#" + (number), (number), temp));
-            curPage.adapter.notifyDataSetChanged();
+            curPage.addMem(new myMem("Meme#" + number, number, temp));
             downloading--;
         }
     }
@@ -111,7 +168,7 @@ public class MainActivity extends AppCompatActivity implements ObservableScrollV
     @Override
     public void onDownMotionEvent() {
     }
-    private ViewPager viewPager ;
+    private ViewPager viewPager;
     private LayoutInflater inflater;
     public  MyPageAdapter pageAdapter;
     private void actionBarSetup(ActionBar actionBar){
@@ -121,7 +178,7 @@ public class MainActivity extends AppCompatActivity implements ObservableScrollV
         customTitle.setOnClickListener(new View.OnClickListener(){
             @Override
             public void onClick(View v) {
-                ObservableListView listView = viewPager.getFocusedChild().findViewById(R.id.list);
+                RecyclerView listView = viewPager.getFocusedChild().findViewById(R.id.list);
                 listView.smoothScrollToPosition(0);
             }
         });
